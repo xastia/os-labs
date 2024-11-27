@@ -5,9 +5,14 @@ public class PagingSystem {
             pageTable.addPage(i);
         }
 
-        MMU mmu = new MMU(pageTable, 4);
+
+        MMU mmu = new MMU(pageTable, 7);
+
+
+
 
         int[] accessPattern = {1, 2, 3, 4, 2, 5, 3, 1, 4, 2, 5, 1};
+
 
         System.out.println("Simulating access with NRU algorithm:");
         for (int pageId : accessPattern) {
@@ -15,11 +20,17 @@ public class PagingSystem {
         }
         mmu.report();
 
+
         System.out.println("\nSimulating access with Random Replacement algorithm:");
-        MMU mmuRandom = new MMU(pageTable, 4);
+        MMU mmuRandom = new MMU(pageTable, 7);
         for (int pageId : accessPattern) {
             mmuRandom.accessPage(pageId, ReplacementAlgorithm.RANDOM);
         }
         mmuRandom.report();
     }
 }
+
+
+
+
+
