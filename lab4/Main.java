@@ -19,14 +19,38 @@ public class Main {
                     case "create":
                         fs.create(parts[1]);
                         break;
-                    case "truncate":
-                        fs.truncate(parts[1], Integer.parseInt(parts[2]));
-                        break;
                     case "ls":
                         fs.ls();
                         break;
+                    case "open":
+                        fs.open(parts[1]);
+                        break;
+                    case "close":
+                        fs.close(Integer.parseInt(parts[1]));
+                        break;
+                    case "seek":
+                        fs.seek(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+                        break;
+                    case "write":
+                        fs.write(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+                        break;
+                    case "read":
+                        fs.read(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+                        break;
+                    case "stat":
+                        fs.stat(parts[1]);
+                        break;
+                    case "link":
+                        fs.link(parts[1], parts[2]);
+                        break;
+                    case "unlink":
+                        fs.unlink(parts[1]);
+                        break;
                     case "exit":
                         System.exit(0);
+                    case "truncate":
+                        fs.truncate(parts[1], Integer.parseInt(parts[2]));
+                        break;
                     default:
                         System.out.println("Unknown command.");
                 }

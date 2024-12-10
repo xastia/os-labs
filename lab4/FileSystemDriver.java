@@ -49,6 +49,19 @@ class FileSystemDriver {
         System.out.println("File \"" + name + "\" truncated to size " + size + " bytes.");
     }
 
+    public void stat(String name) {
+        Integer descriptorIndex = rootDirectory.getEntry(name);
+        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+        FileDescriptor descriptor = descriptors.get(descriptorIndex);
+    
+        System.out.println("File: " + name);
+        System.out.println("Type: " + descriptor.type);
+        System.out.println("Size: " + descriptor.size + " bytes");
+        System.out.println("Hard Links: " + descriptor.hardLinks);
+        System.out.println("Blocks: " + descriptor.blockMap.size());
+    }
+    
+
     public void ls() {
         rootDirectory.listEntries().forEach((name, descriptorIndex) -> {
             System.out.println(name + " -> Descriptor " + descriptorIndex);
@@ -85,20 +98,66 @@ class FileSystemDriver {
         OpenFile openFile = openFileTable.get(fd);
         if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
         FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
-        for (int i = 0; i < size; i++) {
-            descriptor.blockMap.add(storage.allocateBlock());
+    
+        byte[] dataToWrite = new byte[size];
+        Arrays.fill(dataToWrite, (byte) 'A'); // Наприклад, записуємо символ 'A' (можна змінити)
+    
+        int remaining = size;
+        int offsetInBlock = openFile.offset % storage.getBlockSize();
+    
+        while (remaining > 0) {
+            int blockIndex = openFile.offset / storage.getBlockSize();
+            if (blockIndex >= descriptor.blockMap.size()) {
+                descriptor.blockMap.add(storage.allocateBlock());
+            }
+            int blockNumber = descriptor.blockMap.get(blockIndex);
+    
+            byte[] block = storage.getBlock(blockNumber);
+            int writeSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
+    
+            System.arraycopy(dataToWrite, size - remaining, block, offsetInBlock, writeSize);
+    
+            remaining -= writeSize;
+            openFile.offset += writeSize;
+            offsetInBlock = 0; 
         }
-        descriptor.size += size;
-        openFile.offset += size;
+    
+        descriptor.size = Math.max(descriptor.size, openFile.offset);
         System.out.println(size + " bytes written to file descriptor " + fd);
     }
+    
 
     public void read(int fd, int size) {
         OpenFile openFile = openFileTable.get(fd);
         if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
-        System.out.println("Read " + size + " bytes from file descriptor " + fd + " starting from offset " + openFile.offset);
-        openFile.offset += size;
+        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+    
+        if (openFile.offset + size > descriptor.size) {
+            throw new IllegalArgumentException("Read exceeds file size.");
+        }
+    
+        byte[] buffer = new byte[size];
+        int remaining = size;
+        int offsetInBlock = openFile.offset % storage.getBlockSize();
+    
+        while (remaining > 0) {
+            int blockIndex = openFile.offset / storage.getBlockSize();
+            int blockNumber = descriptor.blockMap.get(blockIndex);
+    
+            byte[] block = storage.getBlock(blockNumber);
+            int readSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
+    
+            System.arraycopy(block, offsetInBlock, buffer, size - remaining, readSize);
+    
+            remaining -= readSize;
+            openFile.offset += readSize;
+            offsetInBlock = 0; 
+        }
+    
+        System.out.println("Read " + size + " bytes from file descriptor " + fd + " starting from offset " + (openFile.offset - size));
+        System.out.println("Data: " + new String(buffer));
     }
+    
 
     public void link(String name1, String name2) {
         Integer descriptorIndex = rootDirectory.getEntry(name1);
