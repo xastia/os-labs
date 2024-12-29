@@ -30,10 +30,10 @@ class FileSystemDriver {
         Integer descriptorIndex = rootDirectory.getEntry(name);
         if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
         FileDescriptor descriptor = descriptors.get(descriptorIndex);
-
+    
         int currentBlocks = (int) Math.ceil((double) descriptor.size / storage.getBlockSize());
         int requiredBlocks = (int) Math.ceil((double) size / storage.getBlockSize());
-
+    
         if (requiredBlocks < currentBlocks) {
             for (int i = requiredBlocks; i < descriptor.blockMap.size(); i++) {
                 storage.freeBlock(descriptor.blockMap.get(i));
@@ -44,10 +44,11 @@ class FileSystemDriver {
                 descriptor.blockMap.add(storage.allocateBlock());
             }
         }
-
+    
         descriptor.size = size;
         System.out.println("File \"" + name + "\" truncated to size " + size + " bytes.");
     }
+    
 
     public void stat(String name) {
         Integer descriptorIndex = rootDirectory.getEntry(name);
@@ -79,9 +80,19 @@ class FileSystemDriver {
 
     public void close(int fd) {
         if (!openFileTable.containsKey(fd)) throw new IllegalArgumentException("Invalid file descriptor.");
+        OpenFile openFile = openFileTable.get(fd);
+        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+    
         openFileTable.remove(fd);
+    
+        if (descriptor.hardLinks == 0) {
+            descriptor.blockMap.forEach(storage::freeBlock);
+            descriptors.set(openFile.descriptorIndex, null);
+        }
+    
         System.out.println("File descriptor " + fd + " closed.");
     }
+    
 
     public void seek(int fd, int offset) {
         OpenFile openFile = openFileTable.get(fd);
@@ -100,8 +111,7 @@ class FileSystemDriver {
         FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
     
         byte[] dataToWrite = new byte[size];
-        Arrays.fill(dataToWrite, (byte) 'A'); // Наприклад, записуємо символ 'A' (можна змінити)
-    
+        Arrays.fill(dataToWrite, (byte) 'A');
         int remaining = size;
         int offsetInBlock = openFile.offset % storage.getBlockSize();
     
@@ -119,12 +129,13 @@ class FileSystemDriver {
     
             remaining -= writeSize;
             openFile.offset += writeSize;
-            offsetInBlock = 0; 
+            offsetInBlock = 0;
         }
     
         descriptor.size = Math.max(descriptor.size, openFile.offset);
         System.out.println(size + " bytes written to file descriptor " + fd);
     }
+    
     
 
     public void read(int fd, int size) {
@@ -151,12 +162,13 @@ class FileSystemDriver {
     
             remaining -= readSize;
             openFile.offset += readSize;
-            offsetInBlock = 0; 
+            offsetInBlock = 0;
         }
     
         System.out.println("Read " + size + " bytes from file descriptor " + fd + " starting from offset " + (openFile.offset - size));
         System.out.println("Data: " + new String(buffer));
     }
+    
     
 
     public void link(String name1, String name2) {
