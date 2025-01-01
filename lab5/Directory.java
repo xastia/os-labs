@@ -17,6 +17,11 @@ class Directory {
         return entries.get(name);
     }
 
+    public Boolean isEmpty() {
+            return entries.isEmpty();
+        
+    }
+
     public Map<String, Integer> listEntries() {
         return new HashMap<>(entries);
     }

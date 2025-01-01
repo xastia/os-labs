@@ -7,6 +7,7 @@ class FileDescriptor {
 
     FileType type;
     int size; 
+    final Directory directory;
     int hardLinks; 
     List<Integer> blockMap; 
     Integer singleIndirectBlock; 
@@ -15,6 +16,16 @@ class FileDescriptor {
         this.type = type;
         this.size = 0;
         this.hardLinks = 1;
+        this.directory = null;
+        this.blockMap = new ArrayList<>();
+        this.singleIndirectBlock = null;
+    }
+
+    public FileDescriptor(FileType type, Directory directory) {
+        this.type = type;
+        this.size = 0;
+        this.hardLinks = 1;
+        this.directory = directory;
         this.blockMap = new ArrayList<>();
         this.singleIndirectBlock = null;
     }

@@ -1,194 +1,337 @@
-import java.util.*;
 
-class FileSystemDriver {
-    private final List<FileDescriptor> descriptors;
-    private final BlockStorage storage;
-    private final Directory rootDirectory;
-    private final Map<Integer, OpenFile> openFileTable;
+    import java.util.*;
 
-    public FileSystemDriver(int maxDescriptors, int numBlocks, int blockSize) {
-        this.descriptors = new ArrayList<>(Collections.nCopies(maxDescriptors, null));
-        this.storage = new BlockStorage(numBlocks, blockSize);
-        this.rootDirectory = new Directory();
-        this.openFileTable = new HashMap<>();
-    }
-
-    public void mkfs() {
-        descriptors.set(0, new FileDescriptor(FileDescriptor.FileType.DIRECTORY));
-        System.out.println("Filesystem initialized.");
-    }
-
-    public void create(String name) {
-        int freeIndex = descriptors.indexOf(null);
-        if (freeIndex == -1) throw new IllegalStateException("No free descriptors available.");
-        descriptors.set(freeIndex, new FileDescriptor(FileDescriptor.FileType.REGULAR));
-        rootDirectory.addEntry(name, freeIndex);
-        System.out.println("File \"" + name + "\" created.");
-    }
-
-    public void truncate(String name, int size) {
-        Integer descriptorIndex = rootDirectory.getEntry(name);
-        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
-        FileDescriptor descriptor = descriptors.get(descriptorIndex);
+    class FileSystemDriver {
+        private final List<FileDescriptor> descriptors;
+        private final BlockStorage storage;
+        private final Directory rootDirectory;
+        private final Map<Integer, OpenFile> openFileTable;
+        private Directory currentDirectory;
     
-        int currentBlocks = (int) Math.ceil((double) descriptor.size / storage.getBlockSize());
-        int requiredBlocks = (int) Math.ceil((double) size / storage.getBlockSize());
+        public FileSystemDriver(int maxDescriptors, int numBlocks, int blockSize) {
+            this.descriptors = new ArrayList<>(Collections.nCopies(maxDescriptors, null));
+            this.storage = new BlockStorage(numBlocks, blockSize);
+            this.rootDirectory = new Directory();
+            this.openFileTable = new HashMap<>();
+            this.currentDirectory = rootDirectory;
+        }
     
-        if (requiredBlocks < currentBlocks) {
-            for (int i = requiredBlocks; i < descriptor.blockMap.size(); i++) {
-                storage.freeBlock(descriptor.blockMap.get(i));
+        public void mkfs() {
+            Directory rootDir = new Directory();
+            FileDescriptor rootDescriptor = new FileDescriptor(FileDescriptor.FileType.DIRECTORY, rootDir);
+            descriptors.set(0, rootDescriptor);
+            rootDir.addEntry(".", 0); // Current directory
+            rootDir.addEntry("..", 0); // Parent directory
+            System.out.println("Filesystem initialized.");
+        }
+    
+        public void mkdir(String path) {
+            PathResolutionResult result = resolvePath(path);
+            Directory parent = result.parentDirectory;
+            String name = result.targetName;
+    
+            if (parent.getEntry(name) != null) {
+                throw new IllegalArgumentException("Directory already exists.");
             }
-            descriptor.blockMap = descriptor.blockMap.subList(0, requiredBlocks);
-        } else if (requiredBlocks > currentBlocks) {
-            for (int i = currentBlocks; i < requiredBlocks; i++) {
-                descriptor.blockMap.add(storage.allocateBlock());
+    
+            int freeIndex = descriptors.indexOf(null);
+            if (freeIndex == -1) throw new IllegalStateException("No free descriptors available.");
+    
+            Directory newDir = new Directory();
+            FileDescriptor newDirDescriptor = new FileDescriptor(FileDescriptor.FileType.DIRECTORY, newDir);
+            descriptors.set(freeIndex, newDirDescriptor);
+            newDir.addEntry(".", freeIndex);
+            newDir.addEntry("..", result.parentIndex);
+    
+            parent.addEntry(name, freeIndex);
+            System.out.println("Directory created: " + path);
+        }
+    
+        public void rmdir(String path) {
+            PathResolutionResult result = resolvePath(path);
+            Directory parent = result.parentDirectory;
+            String name = result.targetName;
+    
+            Integer dirIndex = parent.getEntry(name);
+            if (dirIndex == null) throw new IllegalArgumentException("Directory not found.");
+    
+            FileDescriptor descriptor = descriptors.get(dirIndex);
+            if (descriptor.type != FileDescriptor.FileType.DIRECTORY) {
+                throw new IllegalArgumentException("Path is not a directory.");
+            }
+    
+            Directory dir = descriptor.directory;
+            if (dir.listEntries().size() > 2) {
+                throw new IllegalStateException("Directory is not empty.");
+            }
+    
+            descriptors.set(dirIndex, null);
+            parent.removeEntry(name);
+            System.out.println("Directory removed: " + path);
+        }
+    
+        public void cd(String path) {
+            PathResolutionResult result = resolvePath(path);
+            Integer dirIndex = result.targetIndex;
+    
+            if (dirIndex == null) throw new IllegalArgumentException("Directory not found.");
+    
+            FileDescriptor descriptor = descriptors.get(dirIndex);
+            if (descriptor.type != FileDescriptor.FileType.DIRECTORY) {
+                throw new IllegalArgumentException("Path is not a directory.");
+            }
+    
+            currentDirectory = descriptor.directory;
+            System.out.println("Changed directory to: " + path);
+        }
+    
+        private PathResolutionResult resolvePath(String path) {
+            String[] parts = path.split("/");
+            Directory current = path.startsWith("/") ? rootDirectory : currentDirectory;
+            int parentIndex = 0;
+    
+            for (int i = 0; i < parts.length - 1; i++) {
+                if (parts[i].isEmpty() || parts[i].equals(".")) continue;
+                if (parts[i].equals("..")) {
+                    Integer parent = current.getEntry("..");
+                    if (parent == null) throw new IllegalArgumentException("Invalid path.");
+                    current = descriptors.get(parent).directory;
+                    parentIndex = parent;
+                } else {
+                    Integer nextIndex = current.getEntry(parts[i]);
+                    if (nextIndex == null) throw new IllegalArgumentException("Invalid path.");
+                    FileDescriptor nextDescriptor = descriptors.get(nextIndex);
+                    if (nextDescriptor.type != FileDescriptor.FileType.DIRECTORY) {
+                        throw new IllegalArgumentException("Path component is not a directory.");
+                    }
+                    current = nextDescriptor.directory;
+                    parentIndex = nextIndex;
+                }
+            }
+    
+            String targetName = parts[parts.length - 1];
+            return new PathResolutionResult(current, targetName, parentIndex);
+        }
+    
+        private static class PathResolutionResult {
+            Directory parentDirectory;
+            String targetName;
+            int parentIndex;
+            Integer targetIndex;
+    
+            PathResolutionResult(Directory parentDirectory, String targetName, int parentIndex) {
+                this.parentDirectory = parentDirectory;
+                this.targetName = targetName;
+                this.parentIndex = parentIndex;
+                this.targetIndex = parentDirectory.getEntry(targetName);
             }
         }
     
-        descriptor.size = size;
-        System.out.println("File \"" + name + "\" truncated to size " + size + " bytes.");
-    }
     
-
-    public void stat(String name) {
-        Integer descriptorIndex = rootDirectory.getEntry(name);
-        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
-        FileDescriptor descriptor = descriptors.get(descriptorIndex);
+        public void symlink(String str, String pathname) {
+            if (str.length() > storage.getBlockSize())
+                throw new IllegalArgumentException("Symbolic link content exceeds block size.");
     
-        System.out.println("File: " + name);
-        System.out.println("Type: " + descriptor.type);
-        System.out.println("Size: " + descriptor.size + " bytes");
-        System.out.println("Hard Links: " + descriptor.hardLinks);
-        System.out.println("Blocks: " + descriptor.blockMap.size());
-    }
+            String[] parts = splitPath(pathname);
+            Directory parent = navigateToDirectory(parts[0]);
+            String name = parts[1];
     
-
-    public void ls() {
-        rootDirectory.listEntries().forEach((name, descriptorIndex) -> {
-            System.out.println(name + " -> Descriptor " + descriptorIndex);
-        });
-    }
-
-    public int open(String name) {
-        Integer descriptorIndex = rootDirectory.getEntry(name);
-        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
-        int fd = openFileTable.size();
-        openFileTable.put(fd, new OpenFile(descriptorIndex));
-        System.out.println("File \"" + name + "\" opened with descriptor " + fd);
-        return fd;
-    }
-
-    public void close(int fd) {
-        if (!openFileTable.containsKey(fd)) throw new IllegalArgumentException("Invalid file descriptor.");
-        OpenFile openFile = openFileTable.get(fd);
-        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+            int freeIndex = descriptors.indexOf(null);
+            if (freeIndex == -1) throw new IllegalStateException("No free descriptors available.");
     
-        openFileTable.remove(fd);
-    
-        if (descriptor.hardLinks == 0) {
-            descriptor.blockMap.forEach(storage::freeBlock);
-            descriptors.set(openFile.descriptorIndex, null);
+            FileDescriptor symlink = new FileDescriptor(FileDescriptor.FileType.REGULAR);
+            symlink.size = str.length();
+            symlink.blockMap.add(storage.allocateBlock());
+            System.arraycopy(str.getBytes(), 0, storage.getBlock(symlink.blockMap.get(0)), 0, str.length());
+            descriptors.set(freeIndex, symlink);
+            parent.addEntry(name, freeIndex);
+            System.out.println("Symbolic link created: " + pathname);
         }
     
-        System.out.println("File descriptor " + fd + " closed.");
-    }
-    
-
-    public void seek(int fd, int offset) {
-        OpenFile openFile = openFileTable.get(fd);
-        if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
-        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
-        if (offset < 0 || offset > descriptor.size) {
-            throw new IllegalArgumentException("Offset out of bounds.");
+        private String[] splitPath(String pathname) {
+            int lastSlash = pathname.lastIndexOf('/');
+            String directory = (lastSlash > 0) ? pathname.substring(0, lastSlash) : ".";
+            String name = pathname.substring(lastSlash + 1);
+            return new String[]{directory, name};
         }
-        openFile.offset = offset;
-        System.out.println("File descriptor " + fd + " offset set to " + offset);
-    }
+    
+        private Directory navigateToDirectory(String path) {
+            // Simplified navigation. Expand to support absolute paths and "..".
+            if (".".equals(path)) return currentDirectory;
+            throw new UnsupportedOperationException("Navigation logic not implemented yet.");
+        }
+    
+        public void create(String name) {
+            int freeIndex = descriptors.indexOf(null);
+            if (freeIndex == -1) throw new IllegalStateException("No free descriptors available.");
+            descriptors.set(freeIndex, new FileDescriptor(FileDescriptor.FileType.REGULAR));
+            rootDirectory.addEntry(name, freeIndex);
+            System.out.println("File \"" + name + "\" created.");
+        }
 
-    public void write(int fd, int size) {
-        OpenFile openFile = openFileTable.get(fd);
-        if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
-        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+        public void ls() {
+            currentDirectory.listEntries().forEach((name, descriptorIndex) -> {
+                System.out.println(name + " -> Descriptor " + descriptorIndex);
+            });
+        }
     
-        byte[] dataToWrite = new byte[size];
-        Arrays.fill(dataToWrite, (byte) 'A');
-        int remaining = size;
-        int offsetInBlock = openFile.offset % storage.getBlockSize();
-    
-        while (remaining > 0) {
-            int blockIndex = openFile.offset / storage.getBlockSize();
-            if (blockIndex >= descriptor.blockMap.size()) {
-                descriptor.blockMap.add(storage.allocateBlock());
+        public void truncate(String name, int size) {
+            Integer descriptorIndex = rootDirectory.getEntry(name);
+            if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+            FileDescriptor descriptor = descriptors.get(descriptorIndex);
+        
+            int currentBlocks = (int) Math.ceil((double) descriptor.size / storage.getBlockSize());
+            int requiredBlocks = (int) Math.ceil((double) size / storage.getBlockSize());
+        
+            if (requiredBlocks < currentBlocks) {
+                for (int i = requiredBlocks; i < descriptor.blockMap.size(); i++) {
+                    storage.freeBlock(descriptor.blockMap.get(i));
+                }
+                descriptor.blockMap = descriptor.blockMap.subList(0, requiredBlocks);
+            } else if (requiredBlocks > currentBlocks) {
+                for (int i = currentBlocks; i < requiredBlocks; i++) {
+                    descriptor.blockMap.add(storage.allocateBlock());
+                }
             }
-            int blockNumber = descriptor.blockMap.get(blockIndex);
+        
+            descriptor.size = size;
+            System.out.println("File \"" + name + "\" truncated to size " + size + " bytes.");
+        }
+        
     
-            byte[] block = storage.getBlock(blockNumber);
-            int writeSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
+        public void stat(String name) {
+            Integer descriptorIndex = rootDirectory.getEntry(name);
+            if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+            FileDescriptor descriptor = descriptors.get(descriptorIndex);
+        
+            System.out.println("File: " + name);
+            System.out.println("Type: " + descriptor.type);
+            System.out.println("Size: " + descriptor.size + " bytes");
+            System.out.println("Hard Links: " + descriptor.hardLinks);
+            System.out.println("Blocks: " + descriptor.blockMap.size());
+        }
+        
     
-            System.arraycopy(dataToWrite, size - remaining, block, offsetInBlock, writeSize);
-    
-            remaining -= writeSize;
-            openFile.offset += writeSize;
-            offsetInBlock = 0;
+        public int open(String name) {
+            Integer descriptorIndex = rootDirectory.getEntry(name);
+            if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+            int fd = openFileTable.size();
+            openFileTable.put(fd, new OpenFile(descriptorIndex));
+            System.out.println("File \"" + name + "\" opened with descriptor " + fd);
+            return fd;
         }
     
-        descriptor.size = Math.max(descriptor.size, openFile.offset);
-        System.out.println(size + " bytes written to file descriptor " + fd);
-    }
+        public void close(int fd) {
+            if (!openFileTable.containsKey(fd)) throw new IllegalArgumentException("Invalid file descriptor.");
+            OpenFile openFile = openFileTable.get(fd);
+            FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+        
+            openFileTable.remove(fd);
+        
+            if (descriptor.hardLinks == 0) {
+                descriptor.blockMap.forEach(storage::freeBlock);
+                descriptors.set(openFile.descriptorIndex, null);
+            }
+        
+            System.out.println("File descriptor " + fd + " closed.");
+        }
+        
     
-    
-
-    public void read(int fd, int size) {
-        OpenFile openFile = openFileTable.get(fd);
-        if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
-        FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
-    
-        if (openFile.offset + size > descriptor.size) {
-            throw new IllegalArgumentException("Read exceeds file size.");
+        public void seek(int fd, int offset) {
+            OpenFile openFile = openFileTable.get(fd);
+            if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
+            FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+            if (offset < 0 || offset > descriptor.size) {
+                throw new IllegalArgumentException("Offset out of bounds.");
+            }
+            openFile.offset = offset;
+            System.out.println("File descriptor " + fd + " offset set to " + offset);
         }
     
-        byte[] buffer = new byte[size];
-        int remaining = size;
-        int offsetInBlock = openFile.offset % storage.getBlockSize();
+        public void write(int fd, int size) {
+            OpenFile openFile = openFileTable.get(fd);
+            if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
+            FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+        
+            byte[] dataToWrite = new byte[size];
+            Arrays.fill(dataToWrite, (byte) 'A');
+            int remaining = size;
+            int offsetInBlock = openFile.offset % storage.getBlockSize();
+        
+            while (remaining > 0) {
+                int blockIndex = openFile.offset / storage.getBlockSize();
+                if (blockIndex >= descriptor.blockMap.size()) {
+                    descriptor.blockMap.add(storage.allocateBlock());
+                }
+                int blockNumber = descriptor.blockMap.get(blockIndex);
+        
+                byte[] block = storage.getBlock(blockNumber);
+                int writeSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
+        
+                System.arraycopy(dataToWrite, size - remaining, block, offsetInBlock, writeSize);
+        
+                remaining -= writeSize;
+                openFile.offset += writeSize;
+                offsetInBlock = 0;
+            }
+        
+            descriptor.size = Math.max(descriptor.size, openFile.offset);
+            System.out.println(size + " bytes written to file descriptor " + fd);
+        }
+        
+        
     
-        while (remaining > 0) {
-            int blockIndex = openFile.offset / storage.getBlockSize();
-            int blockNumber = descriptor.blockMap.get(blockIndex);
+        public void read(int fd, int size) {
+            OpenFile openFile = openFileTable.get(fd);
+            if (openFile == null) throw new IllegalArgumentException("Invalid file descriptor.");
+            FileDescriptor descriptor = descriptors.get(openFile.descriptorIndex);
+        
+            if (openFile.offset + size > descriptor.size) {
+                throw new IllegalArgumentException("Read exceeds file size.");
+            }
+        
+            byte[] buffer = new byte[size];
+            int remaining = size;
+            int offsetInBlock = openFile.offset % storage.getBlockSize();
+        
+            while (remaining > 0) {
+                int blockIndex = openFile.offset / storage.getBlockSize();
+                int blockNumber = descriptor.blockMap.get(blockIndex);
+        
+                byte[] block = storage.getBlock(blockNumber);
+                int readSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
+        
+                System.arraycopy(block, offsetInBlock, buffer, size - remaining, readSize);
+        
+                remaining -= readSize;
+                openFile.offset += readSize;
+                offsetInBlock = 0;
+            }
+        
+            System.out.println("Read " + size + " bytes from file descriptor " + fd + " starting from offset " + (openFile.offset - size));
+            System.out.println("Data: " + new String(buffer));
+        }
+        
+        
     
-            byte[] block = storage.getBlock(blockNumber);
-            int readSize = Math.min(remaining, storage.getBlockSize() - offsetInBlock);
-    
-            System.arraycopy(block, offsetInBlock, buffer, size - remaining, readSize);
-    
-            remaining -= readSize;
-            openFile.offset += readSize;
-            offsetInBlock = 0;
+        public void link(String name1, String name2) {
+            Integer descriptorIndex = rootDirectory.getEntry(name1);
+            if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+            rootDirectory.addEntry(name2, descriptorIndex);
+            descriptors.get(descriptorIndex).hardLinks++;
+            System.out.println("Hard link created: \"" + name2 + "\" -> \"" + name1 + "\"");
         }
     
-        System.out.println("Read " + size + " bytes from file descriptor " + fd + " starting from offset " + (openFile.offset - size));
-        System.out.println("Data: " + new String(buffer));
-    }
-    
-    
-
-    public void link(String name1, String name2) {
-        Integer descriptorIndex = rootDirectory.getEntry(name1);
-        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
-        rootDirectory.addEntry(name2, descriptorIndex);
-        descriptors.get(descriptorIndex).hardLinks++;
-        System.out.println("Hard link created: \"" + name2 + "\" -> \"" + name1 + "\"");
-    }
-
-    public void unlink(String name) {
-        Integer descriptorIndex = rootDirectory.getEntry(name);
-        if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
-        rootDirectory.removeEntry(name);
-        FileDescriptor descriptor = descriptors.get(descriptorIndex);
-        descriptor.hardLinks--;
-        if (descriptor.hardLinks == 0 && !openFileTable.containsValue(descriptorIndex)) {
-            descriptor.blockMap.forEach(storage::freeBlock);
-            descriptors.set(descriptorIndex, null);
+        public void unlink(String name) {
+            Integer descriptorIndex = rootDirectory.getEntry(name);
+            if (descriptorIndex == null) throw new IllegalArgumentException("File not found.");
+            rootDirectory.removeEntry(name);
+            FileDescriptor descriptor = descriptors.get(descriptorIndex);
+            descriptor.hardLinks--;
+            if (descriptor.hardLinks == 0 && !openFileTable.containsValue(descriptorIndex)) {
+                descriptor.blockMap.forEach(storage::freeBlock);
+                descriptors.set(descriptorIndex, null);
+            }
+            System.out.println("File \"" + name + "\" unlinked.");
         }
-        System.out.println("File \"" + name + "\" unlinked.");
     }
-}

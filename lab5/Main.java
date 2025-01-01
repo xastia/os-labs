@@ -1,6 +1,5 @@
 
-import java.util.Scanner;
-
+import java.util.*;
 
 public class Main {
     public static void main(String[] args) {
@@ -46,11 +45,20 @@ public class Main {
                     case "unlink":
                         fs.unlink(parts[1]);
                         break;
+                    case "mkdir":
+                        fs.mkdir(parts[1]);
+                        break;
+                    case "rmdir":
+                        fs.rmdir(parts[1]);
+                        break;
+                    case "cd":
+                        fs.cd(parts[1]);
+                        break;
+                    case "symlink":
+                        fs.symlink(parts[1], parts[2]);
+                        break;
                     case "exit":
                         System.exit(0);
-                    case "truncate":
-                        fs.truncate(parts[1], Integer.parseInt(parts[2]));
-                        break;
                     default:
                         System.out.println("Unknown command.");
                 }
@@ -60,9 +68,3 @@ public class Main {
         }
     }
 }
-
-
-
-
-
-
