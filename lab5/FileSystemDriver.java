@@ -161,13 +161,25 @@
             throw new UnsupportedOperationException("Navigation logic not implemented yet.");
         }
     
-        public void create(String name) {
+        public void create(String path) {
+            PathResolutionResult result = resolvePath(path);
+            Directory parent = result.parentDirectory;
+            String name = result.targetName;
+        
+            if (parent.getEntry(name) != null) {
+                throw new IllegalArgumentException("File already exists.");
+            }
+        
             int freeIndex = descriptors.indexOf(null);
             if (freeIndex == -1) throw new IllegalStateException("No free descriptors available.");
-            descriptors.set(freeIndex, new FileDescriptor(FileDescriptor.FileType.REGULAR));
-            rootDirectory.addEntry(name, freeIndex);
-            System.out.println("File \"" + name + "\" created.");
+        
+            FileDescriptor fileDescriptor = new FileDescriptor(FileDescriptor.FileType.REGULAR);
+            descriptors.set(freeIndex, fileDescriptor);
+            parent.addEntry(name, freeIndex);
+        
+            System.out.println("File \"" + path + "\" created.");
         }
+        
 
         public void ls() {
             currentDirectory.listEntries().forEach((name, descriptorIndex) -> {
